@@ -1,0 +1,102 @@
+{
+"$schema":"http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json",
+"contentVersion":"1.0.0.0",
+"parameters": 
+    {
+    "omsWorkspaceName":{"type":"string"},
+    "omsWorkspaceLocation":{"type":"string"},
+    "eventProcessingSchema":{"type":"string"},
+    "alertVersion":{"type":"string"}
+    },
+"variables": 
+    {
+    "alertTag": "[concat('hidden-link:', resourceId('Microsoft.OperationalInsights/workspaces', parameters('omsWorkspaceName')))]",
+    "extendedFields": " | extend eventType = 'itsm-Type', eventResource = 'itsm-Resource', eventFormat = 'itsm-Format', eventProcessingSchema = '",
+    "endExtension": "'",
+    "extendedQuery":"[concat(variables('extendedFields'), parameters('eventProcessingSchema'),variables('endExtension'))]",
+    "AzureDiagnostics":" | extend ResourceId = tolower(ResourceId), Resource = tolower(Resource)",
+    "AzureMetrics":" | extend ResourceId = tolower(ResourceId), Resource = tolower(Resource)",
+    "ConfigurationChange":" | join kind= leftouter ( Heartbeat | distinct SourceComputerId,SubscriptionId,ResourceId) on SourceComputerId | extend Resource = Computer | project-away SourceComputerId1",
+    "Event":"  | parse kind=relaxed _ResourceId with * '/subscriptions/' SubscriptionId '/resourcegroups/' * | extend Resource = Computer, ResourceId = _ResourceId | project-away  Computer, _ResourceId",
+    "Heartbeat":" | extend Resource = Computer",
+    "Perf":" | parse kind=relaxed _ResourceId with * '/subscriptions/' SubscriptionId '/resourcegroups/' * | extend Resource = Computer, ResourceId = _ResourceId | project-away  Computer, _ResourceId",
+    "Syslog":"  | parse kind=relaxed _ResourceId with * '/subscriptions/' SubscriptionId '/resourcegroups/' * | extend Resource = Computer, ResourceId = _ResourceId | project-away  Computer, _ResourceId",
+    "Update":"; Query | join kind= leftouter (Query | summarize makelist(Computer) by ResourceId) on ResourceId | project-away  Computer, ResourceId1",
+    "MASActivity":" | extend ResourceId = Scope_s",
+    "alertStandard":
+        {
+        "AzureActivity":"[variables('extendedQuery')]",
+        "AzureDiagnostics":"[concat(variables('AzureDiagnostics'), variables('extendedQuery'))]",
+        "AzureMetrics":"[concat(variables('AzureMetrics'), variables('extendedQuery'))]",
+        "ConfigurationChange":"[concat(variables('ConfigurationChange'), variables('extendedQuery'))]",
+        "Event":"[concat(variables('Event'), variables('extendedQuery'))]",
+        "Heartbeat":"[concat(variables('Heartbeat'), variables('extendedQuery'))]",
+        "Perf":"[concat(variables('Perf'), variables('extendedQuery'))]",
+        "Syslog":"[concat(variables('Syslog'), variables('extendedQuery'))]",
+        "Update":"[concat(variables('Update'), variables('extendedQuery'))]",
+        "MASActivity":"[concat(variables('MASActivity'), variables('extendedQuery'))]",
+        "MASHardware":"[variables('extendedQuery')]"
+        },
+    "alertArray":
+        [
+            {
+            "alertName":"Major-LoadBalancer-Health Probe Status",
+            "description":"LoadBalancer-Health Probe Status less than 25%.",
+            "severity":"1",
+            "query":"AzureDiagnostics | where ResourceType == 'LOADBALANCERS' | where OperationName == 'LoadBalancerProbeHealthStatus' and healthPercentage_d <= 25",
+            "searchCategory":"AzureDiagnostics",
+            "alertThresholdValue":0,
+            "operator":"GreaterThan",
+            "alertThrottleInMinutes":0,
+            "alertBreach":1,
+            "scheduleIntervalInMinutes":5,
+            "scheduleQueryTimeSpan":5,      
+            "eventType":"Performance",
+            "eventResource":"Load Balancer",
+            "actionGroupName":"AG-Major"
+            }
+        ]
+    },
+"resources":
+    [   
+        {
+        "name":"[variables('alertArray')[copyIndex()].alertName]",
+        "type":"Microsoft.Insights/scheduledQueryRules",
+        "apiVersion": "2018-04-16",
+        "copy":
+            {
+            "name":"RuleCopy",
+            "count":"[length(variables('alertArray'))]"
+            }, 
+        "location": "[parameters('omsWorkspaceLocation')]",
+        "tags":{"[variables('alertTag')]": "[variables('alertArray')[copyIndex()].searchCategory]"},
+        "properties":
+            {
+            "description": "[concat('Version:', parameters('alertVersion'), ' ', variables('alertArray')[copyIndex()].description)]",
+            "enabled": "true",
+            "source": 
+                {
+                "query": "[concat(variables('alertArray')[copyIndex()].query, replace(replace(replace(variables('alertStandard')[variables('alertArray')[copyIndex()].searchCategory],'itsm-Type', variables('alertArray')[copyIndex()].eventType) ,'itsm-Resource', variables('alertArray')[copyIndex()].eventResource),'itsm-Format', variables('alertArray')[copyIndex()].searchCategory))]",
+                "dataSourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('omsWorkspaceName'))]",
+                "queryType": "ResultCount"
+                },
+            "schedule":
+                {
+                "frequencyInMinutes": "[variables('alertArray')[copyIndex()].scheduleIntervalInMinutes]",
+                "timeWindowInMinutes": "[variables('alertArray')[copyIndex()].scheduleQueryTimeSpan]"
+                },
+            "action":
+                {
+                "odata.type": "Microsoft.WindowsAzure.Management.Monitoring.Alerts.Models.Microsoft.AppInsights.Nexus.DataContracts.Resources.ScheduledQueryRules.AlertingAction",
+                "severity":"[variables('alertArray')[copyIndex()].severity]",
+                "aznsAction":{"actionGroup":"[array(resourceId('Microsoft.Insights/actionGroups', variables('alertArray')[copyIndex()].actionGroupName))]"},
+                "trigger":
+                    {
+                    "thresholdOperator":"[variables('alertArray')[copyIndex()].operator]",
+                    "threshold":"[variables('alertArray')[copyIndex()].alertThresholdValue]"
+                    }
+                }
+            }
+        }
+    ]
+} 
